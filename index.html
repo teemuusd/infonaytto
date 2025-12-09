@@ -70,8 +70,9 @@
 
 <script>
 // --- ASETUKSET ---
+// Vaihdettu uuteen, suorampaan API-osoitteeseen, joka ei ehkä tarvitse proxya.
+var API_BASE = 'api.publictransport.tampere.fi';
 var PROXY_URL = 'api.allorigins.win';
-var API_BASE = 'data.itsfactory.fi';
 var STOP_A = '0811';
 var STOP_B = '0812';
 var LINES_WANTED = ['1','3'];
@@ -82,9 +83,7 @@ var WEATHER_URL = "api.open-meteo.com";
 function updateClock(){
   var el = document.getElementById('clock');
   var now = new Date();
-  el.textContent = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) {
-      return n.toString().padStart(2, '0');
-  }).join(':');
+  el.textContent = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) { return n.toString().padStart(2, '0'); }).join(':');
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -105,9 +104,7 @@ function makeHttpRequest(url, callback, useProxy) {
                     var actualData = useProxy && rawData.contents ? JSON.parse(rawData.contents) : rawData;
                     callback(null, actualData);
                 } catch (e) {
-                    // Joskus proxy palauttaa virheen JSON-jäsennyksessä, vaikka status on 200
-                    callback(new Error('JSON parse error, check console for details.'), null);
-                    console.log("Raw response from proxy:", xhr.responseText);
+                    callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
                 }
             } else {
                 callback(new Error('HTTP-virhe: ' + xhr.status), null);
@@ -157,21 +154,22 @@ function renderFor(containerId, journeys){
 }
 
 function updateAll(){
+  // HUOM: Kokeillaan ilman proxya, jos uusi osoite sallii sen.
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_A + '&pageSize=200', function(err, dataA) {
-    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: Tarkista verkko.</div>'; } 
+    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: ' + err.message + '</div>'; } 
     else { renderFor('content-A', normalizeJourneys(dataA.journeys || [])); }
-  }, true); 
+  }, false); // false = ei käytä proxya
   
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_B + '&pageSize=200', function(err, dataB) {
-    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: Tarkista verkko.</div>'; } 
+    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: ' + err.message + '</div>'; } 
     else { renderFor('content-B', normalizeJourneys(dataB.journeys || [])); }
-  }, true); 
+  }, false); // false = ei käytä proxya
 }
 updateAll();
 setInterval(updateAll, 10000);
 
 
-// --- Palautteet (Ei tarvitse proxya) ---
+// --- Palautteet (Toimii suoraan GitHubissa) ---
 function fetchAndDisplayFeedbacks() {
   makeHttpRequest(FEEDBACK_FILE, function(err, allFeedbacks) {
     var feedbackDisplayEl = document.getElementById('feedback-display');
@@ -187,8 +185,9 @@ fetchAndDisplayFeedbacks();
 setInterval(fetchAndDisplayFeedbacks, 30000);
 
 
-// --- Sään haku (Käytetään nyt proxya varmuuden vuoksi) ---
+// --- Sään haku (Toimii suoraan GitHubissa) ---
 function loadWeather(){
+  // Open-Meteo toimii yleensä ilman proxya
   makeHttpRequest(WEATHER_URL, function(err, d) {
     var weatherWidgetEl = document.getElementById("weather-content");
     if (err) { console.error("Error fetching weather:", err); weatherWidgetEl.textContent = "Virhe ladattaessa säätä."; return; }
@@ -199,7 +198,7 @@ function loadWeather(){
     var desc = descMap[code] || "Säätietoja ei saatavilla";
 
     weatherWidgetEl.innerHTML = '<div class="weather-temp">' + t + '°C</div><div class="weather-desc">' + desc + '</div>';
-  }, true); // Asetettu true käyttämään proxya
+  }, false); // false = ei käytä proxya
 }
 loadWeather();
 setInterval(loadWeather, 900000);

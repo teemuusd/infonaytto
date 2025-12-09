@@ -70,7 +70,7 @@
 
 <script>
 // --- ASETUKSET ---
-// Vaihdettu uuteen, luotettavampaan CORS-välityspalvelimeen
+// Käytämme luotettavaa välityspalvelinta Nysse APIa varten CORS-ongelman takia
 var PROXY_URL = 'api.allorigins.win';
 var API_BASE = 'data.itsfactory.fi';
 var STOP_A = '0811';
@@ -78,32 +78,36 @@ var STOP_B = '0812';
 var LINES_WANTED = ['1','3'];
 var FEEDBACK_FILE = 'palautteet.json';
 
-// --- KELLO ---
+
+// --- Kellonaika ---
 function updateClock(){
   var el = document.getElementById('clock');
   var now = new Date();
-  var hh = now.getHours().toString().padStart(2, '0');
-  var mm = now.getMinutes().toString().padStart(2, '0');
-  var ss = now.getSeconds().toString().padStart(2, '0');
-  el.textContent = hh + ':' + mm + ':' + ss;
+  el.textContent = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) {
+      return n.toString().padStart(2, '0');
+  }).join(':');
 }
 setInterval(updateClock, 1000);
 updateClock();
 
-// --- HTTP Pyyntöfunktio (XMLHttpRequest) ---
+
+// --- HTTP Pyyntöfunktio (XMLHttpRequest, ES5 yhteensopiva) ---
 function makeHttpRequest(url, callback, useProxy) {
     var xhr = new XMLHttpRequest();
+    // Jos käytetään proxya, URL muokataan
     var finalUrl = useProxy ? PROXY_URL + encodeURIComponent(url) : url;
     
-    xhr.overrideMimeType("application/json"); // Tämä ei toimi proxyn kanssa, käsitellään vastauksessa
-    xhr.open('GET', finalUrl + '&t=' + new Date().getTime(), true); 
+    // Lisätään aikaleima URL:iin, jotta selain ei käytä välimuistia (Cache busting)
+    finalUrl += (finalUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
+
+    xhr.open('GET', finalUrl, true);
     xhr.onreadystatechange = function () {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
                 try {
                     var rawData = JSON.parse(xhr.responseText);
-                    // Proxin vastaus pitää purkaa erikseen content-osiosta
-                    var actualData = useProxy ? JSON.parse(rawData.contents) : rawData;
+                    // Jos käytettiin proxya, varsinainen data on "contents"-kentässä
+                    var actualData = useProxy && rawData.contents ? JSON.parse(rawData.contents) : rawData;
                     callback(null, actualData);
                 } catch (e) {
                     callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
@@ -116,7 +120,8 @@ function makeHttpRequest(url, callback, useProxy) {
     xhr.send(null);
 }
 
-// --- PYSÄKKIEN LOGIIKKA (ES5 Yhteensopiva) ---
+
+// --- Pysäkkien logiikka (ES5) ---
 function normalizeJourneys(rawList){
   var out = []; var seen = {};
   (rawList || []).forEach(function(j) {
@@ -156,14 +161,14 @@ function renderFor(containerId, journeys){
 }
 
 function updateAll(){
-  // HUOM: Käytetään proxya Nysse APIssa CORS-ongelman takia
+  // Käytetään proxya Nysse APIssa CORS-ongelman takia
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_A + '&pageSize=200', function(err, dataA) {
-    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: Tarkista verkko.</div>'; } 
+    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: ' + err.message + '</div>'; } 
     else { renderFor('content-A', normalizeJourneys(dataA.journeys || [])); }
   }, true); // Aseta true käyttääksesi proxya
   
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_B + '&pageSize=200', function(err, dataB) {
-    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: Tarkista verkko.</div>'; } 
+    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: ' + err.message + '</div>'; } 
     else { renderFor('content-B', normalizeJourneys(dataB.journeys || [])); }
   }, true); // Aseta true käyttääksesi proxya
 }
@@ -171,7 +176,7 @@ updateAll();
 setInterval(updateAll, 10000);
 
 
-// --- Palautteet (Toimii suoraan GitHubissa, ei tarvitse proxya) ---
+// --- Palautteet (Toimii suoraan GitHubissa) ---
 function fetchAndDisplayFeedbacks() {
   makeHttpRequest(FEEDBACK_FILE, function(err, allFeedbacks) {
     var feedbackDisplayEl = document.getElementById('feedback-display');
@@ -187,7 +192,7 @@ fetchAndDisplayFeedbacks();
 setInterval(fetchAndDisplayFeedbacks, 30000);
 
 
-// --- Sään haku (Toimii suoraan GitHubissa, ei tarvitse proxya) ---
+// --- Sään haku (Toimii suoraan GitHubissa) ---
 function loadWeather(){
   var url = "api.open-meteo.com";
   makeHttpRequest(url, function(err, d) {

@@ -70,9 +70,10 @@
 
 <script>
 // --- ASETUKSET ---
-// Käytämme luotettavaa välityspalvelinta kaikkeen ulkoiseen hakuun CORS-ongelman takia
+// Välityspalvelin, jota käytetään Nysse API:n ja Sää API:n kanssa
 var PROXY_URL = 'cors-anywhere.herokuapp.com'; 
-var API_BASE = 'api.publictransport.tampere.fi';
+// Uusin API osoite (toivottavasti toimiva)
+var API_BASE = 'api.publictransport.tampere.fi'; 
 var STOP_A = '0811';
 var STOP_B = '0812';
 var LINES_WANTED = ['1','3'];
@@ -92,15 +93,13 @@ updateClock();
 // --- HTTP Pyyntöfunktio (XMLHttpRequest, ES5 yhteensopiva) ---
 function makeHttpRequest(url, callback, useProxy) {
     var xhr = new XMLHttpRequest();
-    // Välityspalvelin tarvitsee koko URL:n parametrina
     var finalUrl = useProxy ? PROXY_URL + url : url;
-    // Lisätään aikaleima URL:iin, jotta selain ei käytä välimuistia
     finalUrl += (finalUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
 
     xhr.open('GET', finalUrl, true);
     
-    // Tarvitaan CORS-anywhere palvelua varten, jotta se tietää meidän sallivan sen käytön
     if (useProxy) {
+        // Tämä on pakollinen header cors-anywhere palvelulle
         xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
     }
 
@@ -109,9 +108,14 @@ function makeHttpRequest(url, callback, useProxy) {
             if (xhr.status === 200) {
                 try {
                     var actualData = JSON.parse(xhr.responseText);
+                    // Jos käytetään proxya, data voi olla "contents"-kentässä
+                    if (useProxy && actualData.contents) {
+                       actualData = JSON.parse(actualData.contents);
+                    }
                     callback(null, actualData);
                 } catch (e) {
-                    callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
+                    console.error("JSON parse error:", e);
+                    callback(new Error('Virhe JSON-jäsennyksessä tai proxy-vastauksessa'), null);
                 }
             } else {
                 callback(new Error('HTTP-virhe: ' + xhr.status), null);
@@ -192,9 +196,8 @@ fetchAndDisplayFeedbacks();
 setInterval(fetchAndDisplayFeedbacks, 30000);
 
 
-// --- Sään haku (Käytetään nyt myös proxya varmuuden vuoksi) ---
+// --- Sään haku (Käytetään proxya varmuuden vuoksi) ---
 function loadWeather(){
-  // Varmistetaan toimivuus käyttämällä proxya myös säädatan hakuun GitHubista käsin
   makeHttpRequest(WEATHER_URL, function(err, d) {
     var weatherWidgetEl = document.getElementById("weather-content");
     if (err) { console.error("Error fetching weather:", err); weatherWidgetEl.textContent = "Virhe ladattaessa säätä."; return; }

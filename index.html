@@ -65,20 +65,19 @@
       </div>
     </div>
 
-    <footer>Data: Nysse / ITS Factory Journeys API • Päivittyy 10 s välein</footer>
+    <footer>Data: Nysse / Digitransit API • Päivittyy 10 s välein</footer>
   </div>
 
 <script>
 // --- ASETUKSET ---
-// Välityspalvelin, jota käytetään Nysse API:n ja Sää API:n kanssa
-var PROXY_URL = 'cors-anywhere.herokuapp.com'; 
-// Uusin API osoite (toivottavasti toimiva)
-var API_BASE = 'api.publictransport.tampere.fi'; 
-var STOP_A = '0811';
-var STOP_B = '0812';
+// Uusi GraphQL päätepiste Tampereelle
+var GRAPHQL_URL = 'api.digitransit.fi';
+var STOP_A_CODE = 'Tampere:0811'; // Pysäkkikoodit uudessa järjestelmässä
+var STOP_B_CODE = 'Tampere:0812';
 var LINES_WANTED = ['1','3'];
 var FEEDBACK_FILE = 'palautteet.json';
 var WEATHER_URL = "api.open-meteo.com";
+
 
 // --- Kellonaika ---
 function updateClock(){
@@ -91,96 +90,134 @@ updateClock();
 
 
 // --- HTTP Pyyntöfunktio (XMLHttpRequest, ES5 yhteensopiva) ---
-function makeHttpRequest(url, callback, useProxy) {
+function makeHttpRequest(url, callback, isGraphQL) {
     var xhr = new XMLHttpRequest();
-    var finalUrl = useProxy ? PROXY_URL + url : url;
-    finalUrl += (finalUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
+    // Lisätään aikaleima URL:iin, jotta selain ei käytä välimuistia (Cache busting)
+    var finalUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
 
-    xhr.open('GET', finalUrl, true);
-    
-    if (useProxy) {
-        // Tämä on pakollinen header cors-anywhere palvelulle
-        xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+    if (isGraphQL) {
+        // GraphQL käyttää POST-metodia ja lähettää kyselyn datana
+        xhr.open('POST', url, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("Accept", "application/json");
+    } else {
+        xhr.open('GET', finalUrl, true);
     }
-
+    
     xhr.onreadystatechange = function () {
         if (xhr.readyState === 4) {
             if (xhr.status === 200) {
                 try {
                     var actualData = JSON.parse(xhr.responseText);
-                    // Jos käytetään proxya, data voi olla "contents"-kentässä
-                    if (useProxy && actualData.contents) {
-                       actualData = JSON.parse(actualData.contents);
-                    }
                     callback(null, actualData);
                 } catch (e) {
-                    console.error("JSON parse error:", e);
-                    callback(new Error('Virhe JSON-jäsennyksessä tai proxy-vastauksessa'), null);
+                    callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
                 }
             } else {
                 callback(new Error('HTTP-virhe: ' + xhr.status), null);
             }
         }
     };
-    xhr.send(null);
+
+    if (isGraphQL) {
+        // Tämä data lähetetään POST-pyynnön mukana (ks. updateAll funkio)
+        xhr.send(isGraphQL); 
+    } else {
+        xhr.send(null);
+    }
 }
 
-// --- Pysäkkien logiikka (ES5) ---
-function normalizeJourneys(rawList){
-  var out = []; var seen = {};
-  (rawList || []).forEach(function(j) {
-    var line = (j.line && (j.line.name || j.line.shortName)) || j.lineName || j.lineId || '';
-    var headsign = j.headSign || j.destination || '';
-    var departureISO = (j.onwardCalls && j.onwardCalls && (j.onwardCalls.expectedDepartureTime || j.onwardCalls.expectedArrivalTime)) || j.expectedDepartureTime || j.departureTimeIso || null;
-    if(!departureISO && j.departureTime){ var today = new Date(); var d = today.toISOString().slice(0,10); departureISO = d + 'T' + j.departureTime; }
-    var key = line + '|' + headsign + '|' + departureISO;
-    if(!seen[key]){ out.push({line: String(line).trim(), headsign: headsign || '', departureISO: departureISO}); seen[key] = true; }
-  }); return out;
+
+// --- Pysäkkien logiikka (GraphQL haku ja käsittely) ---
+
+function minutesUntil(timeInSeconds){
+    // GraphQL antaa ajan sekunteina keskiyöstä, tämä muuntaa sen minuuteiksi nykyhetkestä
+    var now = new Date();
+    var departureDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, timeInSeconds);
+    // Jos aika on jo mennyt tänään (esim. kello on 23:00 ja ratikka lähti 13:00), lisätään yksi päivä
+    if (departureDate < now) {
+        departureDate.setDate(departureDate.getDate() + 1);
+    }
+    var diffMs = departureDate - now;
+    return Math.round(diffMs / 60000);
 }
-function minutesUntil(iso){
-  if(!iso) return null; var t = Date.parse(iso);
-  if(isNaN(t)) return null; return Math.round((t - Date.now()) / 60000);
+
+function renderFor(containerId, stopData){
+    var el = document.getElementById(containerId);
+    var departures = stopData ? stopData.stoptimesWithoutPatterns : [];
+
+    if(!departures || departures.length === 0){
+        el.innerHTML = '<div class="direction">Ei lähteviä vuoroja tiedossa.</div>';
+        return;
+    }
+
+    var filtered = departures.filter(function(dep) {
+        // GraphQL antaa linjanumeron (esim. "1") suoraan
+        return LINES_WANTED.indexOf(dep.trip.route.shortName) !== -1 && minutesUntil(dep.realtimeDeparture) >= 0;
+    });
+
+    if(filtered.length === 0){
+        el.innerHTML = '<div class="direction">Ei linjoja 1 tai 3 juuri nyt.</div>';
+        return;
+    }
+
+    // Renderöinti pysyy samana, mutta data tulee hieman eri muodossa
+    var html = '';
+    filtered.slice(0, 5).forEach(function(item) {
+        var mins = minutesUntil(item.realtimeDeparture);
+        var arrivalStr = new Date(new Date().setHours(0,0,item.realtimeDeparture)).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+        var timeLabel;
+        
+        if(mins <= 0){
+            timeLabel = '<span class="now">nyt</span> (' + arrivalStr + ')';
+        } else {
+            timeLabel = mins + ' min' + ' (' + arrivalStr + ')';
+        }
+        
+        html += '<div class="dep"><div class="route">Linja ' + item.trip.route.shortName + ' → ' + (item.headsign || '—') + '</div><div class="time">' + timeLabel + '</div></div>';
+    });
+    el.innerHTML = html;
 }
-function renderFor(containerId, journeys){
-  var el = document.getElementById(containerId);
-  if(!journeys || journeys.length === 0){ el.innerHTML = '<div class="direction">Ei lähteviä vuoroja tiedossa.</div>'; return; }
-  var filtered = journeys.filter(function(j) { return LINES_WANTED.indexOf(String(j.line).replace(/\s/g,'')) !== -1 && minutesUntil(j.departureISO) >= 0; });
-  if(filtered.length === 0){ el.innerHTML = '<div class="direction">Ei linjoja 1 tai 3 juuri nyt.</div>'; return; }
-  var groups = {};
-  filtered.forEach(function(j) { var key = j.line + ' — ' + (j.headsign || '—'); if (!groups[key]) groups[key] = []; groups[key].push(j); });
-  var html = '';
-  Object.keys(groups).sort().forEach(function(k) {
-    var arr = groups[k].sort(function(a,b) { return minutesUntil(a.departureISO) - minutesUntil(b.departureISO); }).slice(0,5);
-    var parts = k.split(' — '); var line = parts; var headsign = parts;
-    html += '<div class="line-block"><div class="line-title">Linja ' + line + '</div><div class="direction">' + headsign + '</div><div class="departures">';
-    var nowShown = false;
-    arr.forEach(function(item) {
-      var mins = minutesUntil(item.departureISO); var arrivalTime = item.departureISO ? new Date(item.departureISO) : null;
-      var arrivalStr = arrivalTime ? arrivalTime.getHours().toString().padStart(2,'0') + ':' + arrivalTime.getMinutes().toString().padStart(2,'0') : '—';
-      var timeLabel;
-      if(mins <= 0 && !nowShown){ timeLabel = '<span class="now">nyt</span> (' + arrivalStr + ')'; nowShown = true; } else { timeLabel = mins + ' min' + ' (' + arrivalStr + ')'; }
-      html += '<div class="dep"><div class="route">' + line + ' → ' + (item.headsign || '—') + '</div><div class="time">' + timeLabel + '</div></div>';
-    }); html += '</div></div>';
-  }); el.innerHTML = html;
-}
+
 
 function updateAll(){
-  // Käytetään proxya Nysse APIssa CORS-ongelman takia
-  makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_A + '&pageSize=200', function(err, dataA) {
-    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: ' + err.message + '</div>'; } 
-    else { renderFor('content-A', normalizeJourneys(dataA.journeys || [])); }
-  }, true); // true = käyttää proxya
-  
-  makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_B + '&pageSize=200', function(err, dataB) {
-    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: ' + err.message + '</div>'; } 
-    else { renderFor('content-B', normalizeJourneys(dataB.journeys || [])); }
-  }, true); // true = käyttää proxya
+    // GraphQL-kysely molemmille pysäkeille samanaikaisesti
+    var query = JSON.stringify({
+        query: `{
+            stopA: stop(id: "${STOP_A_CODE}") {
+                stoptimesWithoutPatterns(numberOfDepartures: 10) {
+                    realtimeDeparture
+                    headsign
+                    trip { route { shortName } }
+                }
+            },
+            stopB: stop(id: "${STOP_B_CODE}") {
+                stoptimesWithoutPatterns(numberOfDepartures: 10) {
+                    realtimeDeparture
+                    headsign
+                    trip { route { shortName } }
+                }
+            }
+        }`
+    });
+
+    makeHttpRequest(GRAPHQL_URL, function(err, data) {
+        if (err) {
+            document.getElementById('content-A').innerHTML = '<div class="direction">Virhe: ' + err.message + '</div>';
+            document.getElementById('content-B').innerHTML = '<div class="direction">Virhe: ' + err.message + '</div>';
+        } else if (data.data) {
+            renderFor('content-A', data.data.stopA);
+            renderFor('content-B', data.data.stopB);
+        } else {
+             document.getElementById('content-A').innerHTML = '<div class="direction">API-virhe.</div>';
+        }
+    }, query); // Lähetetään query datana
 }
 updateAll();
 setInterval(updateAll, 10000);
 
 
-// --- Palautteet (Ei tarvitse proxya, koska sama domain) ---
+// --- Palautteet (Toimii suoraan GitHubissa) ---
 function fetchAndDisplayFeedbacks() {
   makeHttpRequest(FEEDBACK_FILE, function(err, allFeedbacks) {
     var feedbackDisplayEl = document.getElementById('feedback-display');
@@ -196,7 +233,7 @@ fetchAndDisplayFeedbacks();
 setInterval(fetchAndDisplayFeedbacks, 30000);
 
 
-// --- Sään haku (Käytetään proxya varmuuden vuoksi) ---
+// --- Sään haku (Toimii suoraan GitHubissa) ---
 function loadWeather(){
   makeHttpRequest(WEATHER_URL, function(err, d) {
     var weatherWidgetEl = document.getElementById("weather-content");
@@ -208,7 +245,7 @@ function loadWeather(){
     var desc = descMap[code] || "Säätietoja ei saatavilla";
 
     weatherWidgetEl.innerHTML = '<div class="weather-temp">' + t + '°C</div><div class="weather-desc">' + desc + '</div>';
-  }, true); // true = käyttää proxya
+  }, false); 
 }
 loadWeather();
 setInterval(loadWeather, 900000);

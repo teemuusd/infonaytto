@@ -70,14 +70,13 @@
 
 <script>
 // --- ASETUKSET ---
-// Käytämme luotettavaa välityspalvelinta Nysse APIa varten CORS-ongelman takia
 var PROXY_URL = 'api.allorigins.win';
 var API_BASE = 'data.itsfactory.fi';
 var STOP_A = '0811';
 var STOP_B = '0812';
 var LINES_WANTED = ['1','3'];
 var FEEDBACK_FILE = 'palautteet.json';
-
+var WEATHER_URL = "api.open-meteo.com";
 
 // --- Kellonaika ---
 function updateClock(){
@@ -94,10 +93,7 @@ updateClock();
 // --- HTTP Pyyntöfunktio (XMLHttpRequest, ES5 yhteensopiva) ---
 function makeHttpRequest(url, callback, useProxy) {
     var xhr = new XMLHttpRequest();
-    // Jos käytetään proxya, URL muokataan
     var finalUrl = useProxy ? PROXY_URL + encodeURIComponent(url) : url;
-    
-    // Lisätään aikaleima URL:iin, jotta selain ei käytä välimuistia (Cache busting)
     finalUrl += (finalUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
 
     xhr.open('GET', finalUrl, true);
@@ -106,11 +102,12 @@ function makeHttpRequest(url, callback, useProxy) {
             if (xhr.status === 200) {
                 try {
                     var rawData = JSON.parse(xhr.responseText);
-                    // Jos käytettiin proxya, varsinainen data on "contents"-kentässä
                     var actualData = useProxy && rawData.contents ? JSON.parse(rawData.contents) : rawData;
                     callback(null, actualData);
                 } catch (e) {
-                    callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
+                    // Joskus proxy palauttaa virheen JSON-jäsennyksessä, vaikka status on 200
+                    callback(new Error('JSON parse error, check console for details.'), null);
+                    console.log("Raw response from proxy:", xhr.responseText);
                 }
             } else {
                 callback(new Error('HTTP-virhe: ' + xhr.status), null);
@@ -120,14 +117,13 @@ function makeHttpRequest(url, callback, useProxy) {
     xhr.send(null);
 }
 
-
 // --- Pysäkkien logiikka (ES5) ---
 function normalizeJourneys(rawList){
   var out = []; var seen = {};
   (rawList || []).forEach(function(j) {
     var line = (j.line && (j.line.name || j.line.shortName)) || j.lineName || j.lineId || '';
     var headsign = j.headSign || j.destination || '';
-    var departureISO = (j.onwardCalls && j.onwardCalls[0] && (j.onwardCalls[0].expectedDepartureTime || j.onwardCalls[0].expectedArrivalTime)) || j.expectedDepartureTime || j.departureTimeIso || null;
+    var departureISO = (j.onwardCalls && j.onwardCalls && (j.onwardCalls.expectedDepartureTime || j.onwardCalls.expectedArrivalTime)) || j.expectedDepartureTime || j.departureTimeIso || null;
     if(!departureISO && j.departureTime){ var today = new Date(); var d = today.toISOString().slice(0,10); departureISO = d + 'T' + j.departureTime; }
     var key = line + '|' + headsign + '|' + departureISO;
     if(!seen[key]){ out.push({line: String(line).trim(), headsign: headsign || '', departureISO: departureISO}); seen[key] = true; }
@@ -147,7 +143,7 @@ function renderFor(containerId, journeys){
   var html = '';
   Object.keys(groups).sort().forEach(function(k) {
     var arr = groups[k].sort(function(a,b) { return minutesUntil(a.departureISO) - minutesUntil(b.departureISO); }).slice(0,5);
-    var parts = k.split(' — '); var line = parts[0]; var headsign = parts[1];
+    var parts = k.split(' — '); var line = parts; var headsign = parts;
     html += '<div class="line-block"><div class="line-title">Linja ' + line + '</div><div class="direction">' + headsign + '</div><div class="departures">';
     var nowShown = false;
     arr.forEach(function(item) {
@@ -161,22 +157,21 @@ function renderFor(containerId, journeys){
 }
 
 function updateAll(){
-  // Käytetään proxya Nysse APIssa CORS-ongelman takia
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_A + '&pageSize=200', function(err, dataA) {
-    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: ' + err.message + '</div>'; } 
+    if (err) { document.getElementById('content-A').innerHTML = '<div class="direction">Virhe A: Tarkista verkko.</div>'; } 
     else { renderFor('content-A', normalizeJourneys(dataA.journeys || [])); }
-  }, true); // Aseta true käyttääksesi proxya
+  }, true); 
   
   makeHttpRequest(API_BASE + '/journeys?stopPointId=' + STOP_B + '&pageSize=200', function(err, dataB) {
-    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: ' + err.message + '</div>'; } 
+    if (err) { document.getElementById('content-B').innerHTML = '<div class="direction">Virhe B: Tarkista verkko.</div>'; } 
     else { renderFor('content-B', normalizeJourneys(dataB.journeys || [])); }
-  }, true); // Aseta true käyttääksesi proxya
+  }, true); 
 }
 updateAll();
 setInterval(updateAll, 10000);
 
 
-// --- Palautteet (Toimii suoraan GitHubissa) ---
+// --- Palautteet (Ei tarvitse proxya) ---
 function fetchAndDisplayFeedbacks() {
   makeHttpRequest(FEEDBACK_FILE, function(err, allFeedbacks) {
     var feedbackDisplayEl = document.getElementById('feedback-display');
@@ -186,16 +181,15 @@ function fetchAndDisplayFeedbacks() {
       newestFirst.forEach(function(feedback) { html += '<div class="feedback-item"><div class="feedback-content">"' + feedback.Palaute + '"</div><div class="feedback-author">— ' + (feedback.nimimerkki || 'Anonyymi') + '</div></div>'; });
       feedbackDisplayEl.innerHTML = html;
     } else { feedbackDisplayEl.textContent = 'Ei näytettäviä palautteita.'; }
-  }, false); // Aseta false, koska ei tarvitse proxya omalle JSON-tiedostolle
+  }, false); 
 }
 fetchAndDisplayFeedbacks();
 setInterval(fetchAndDisplayFeedbacks, 30000);
 
 
-// --- Sään haku (Toimii suoraan GitHubissa) ---
+// --- Sään haku (Käytetään nyt proxya varmuuden vuoksi) ---
 function loadWeather(){
-  var url = "api.open-meteo.com";
-  makeHttpRequest(url, function(err, d) {
+  makeHttpRequest(WEATHER_URL, function(err, d) {
     var weatherWidgetEl = document.getElementById("weather-content");
     if (err) { console.error("Error fetching weather:", err); weatherWidgetEl.textContent = "Virhe ladattaessa säätä."; return; }
     
@@ -205,7 +199,7 @@ function loadWeather(){
     var desc = descMap[code] || "Säätietoja ei saatavilla";
 
     weatherWidgetEl.innerHTML = '<div class="weather-temp">' + t + '°C</div><div class="weather-desc">' + desc + '</div>';
-  }, false); // Aseta false, koska ei tarvitse proxya säärajapinnalle
+  }, true); // Asetettu true käyttämään proxya
 }
 loadWeather();
 setInterval(loadWeather, 900000);

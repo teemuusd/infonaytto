@@ -11,7 +11,14 @@
   header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between}
   h1{margin:0;font-size:28px;letter-spacing:0.4px}
   .clock{font-size:20px;color:var(--muted)}
-  .card{ background:rgba(255,255,255,0.03); border-radius:12px; padding:18px; display:flex; flex-direction:column; overflow: hidden; }
+  .card{
+    background:rgba(255,255,255,0.03);
+    border-radius:12px;
+    padding:18px;
+    display:flex;
+    flex-direction:column;
+    overflow: hidden;
+  }
   .station-title{font-size:18px;color:var(--muted);margin-bottom:8px}
   .line-block{margin-bottom:12px}
   .line-title{font-weight:700;font-size:20px;margin-bottom:6px}
@@ -22,6 +29,7 @@
   .dep .time{font-size:18px}
   footer{grid-column:1/-1;color:var(--muted);font-size:13px;margin-top:6px}
   .now{color:#00bfb3;font-weight:700;}
+
   .feedback-card { background: var(--feedback-bg); grid-column: 3 / 4; }
   .feedback-title { color: var(--accent); font-size: 20px; margin-bottom: 15px; }
   .feedback-list { display: flex; flex-direction: column; gap: 15px; overflow: hidden; }
@@ -29,9 +37,11 @@
   .feedback-item:last-child { border-bottom: none; padding-bottom: 0; }
   .feedback-content { font-size: 16px; line-height: 1.4; margin-bottom: 5px; }
   .feedback-author { font-style: italic; color: var(--muted); text-align: right; font-size: 14px; }
+
   .weather-widget { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
   .weather-temp { font-size: 24px; font-weight: bold; color: white; }
   .weather-desc { font-size: 16px; color: var(--muted); }
+
   @media(max-width:1200px){
     .wrap{grid-template-columns:1fr 1fr;}
     .feedback-card { grid-column: 1 / -1; }
@@ -65,190 +75,226 @@
       </div>
     </div>
 
-    <footer>Data: Nysse / Digitransit API • Päivittyy 10 s välein</footer>
+    <footer>Data: Nysse / ITS Factory Journeys API • Päivittyy 10 s välein</footer>
   </div>
 
 <script>
 // --- ASETUKSET ---
-// Uusi GraphQL päätepiste Tampereelle
-var GRAPHQL_URL = 'api.digitransit.fi';
-var STOP_A_CODE = 'Tampere:0811'; // Pysäkkikoodit uudessa järjestelmässä
-var STOP_B_CODE = 'Tampere:0812';
-var LINES_WANTED = ['1','3'];
-var FEEDBACK_FILE = 'palautteet.json';
-var WEATHER_URL = "api.open-meteo.com";
+const API_BASE = 'https://data.itsfactory.fi'; // PROTOKOLLI MUKANA
+const STOP_A = '0811';
+const STOP_B = '0812';
+const LINES_WANTED = ['1','3'];
+const FEEDBACK_FILE = 'palautteet.json';
+// -------------------
 
-
-// --- Kellonaika ---
+// --- KELLO ---
 function updateClock(){
-  var el = document.getElementById('clock');
-  var now = new Date();
-  el.textContent = [now.getHours(), now.getMinutes(), now.getSeconds()].map(function(n) { return n.toString().padStart(2, '0'); }).join(':');
+  const el = document.getElementById('clock');
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2,'0');
+  const mm = String(now.getMinutes()).padStart(2,'0');
+  const ss = String(now.getSeconds()).padStart(2,'0');
+  el.textContent = `${hh}:${mm}:${ss}`;
 }
-setInterval(updateClock, 1000);
+setInterval(updateClock,1000);
 updateClock();
 
-
-// --- HTTP Pyyntöfunktio (XMLHttpRequest, ES5 yhteensopiva) ---
-function makeHttpRequest(url, callback, isGraphQL) {
-    var xhr = new XMLHttpRequest();
-    // Lisätään aikaleima URL:iin, jotta selain ei käytä välimuistia (Cache busting)
-    var finalUrl = url + (url.indexOf('?') === -1 ? '?' : '&') + 't=' + new Date().getTime();
-
-    if (isGraphQL) {
-        // GraphQL käyttää POST-metodia ja lähettää kyselyn datana
-        xhr.open('POST', url, true);
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.setRequestHeader("Accept", "application/json");
-    } else {
-        xhr.open('GET', finalUrl, true);
-    }
-    
-    xhr.onreadystatechange = function () {
-        if (xhr.readyState === 4) {
-            if (xhr.status === 200) {
-                try {
-                    var actualData = JSON.parse(xhr.responseText);
-                    callback(null, actualData);
-                } catch (e) {
-                    callback(new Error('Virhe JSON-jäsennyksessä: ' + e.message), null);
-                }
-            } else {
-                callback(new Error('HTTP-virhe: ' + xhr.status), null);
-            }
-        }
-    };
-
-    if (isGraphQL) {
-        // Tämä data lähetetään POST-pyynnön mukana (ks. updateAll funkio)
-        xhr.send(isGraphQL); 
-    } else {
-        xhr.send(null);
-    }
+// --- PYSÄKKIEN LOGIIKKA ---
+async function fetchJourneysFor(stopId){
+  const url = `${API_BASE}/journeys?stopPointId=${encodeURIComponent(stopId)}&pageSize=200`;
+  console.log('Fetching', url);
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+  return (await res.json()).journeys || [];
 }
 
-
-// --- Pysäkkien logiikka (GraphQL haku ja käsittely) ---
-
-function minutesUntil(timeInSeconds){
-    // GraphQL antaa ajan sekunteina keskiyöstä, tämä muuntaa sen minuuteiksi nykyhetkestä
-    var now = new Date();
-    var departureDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, timeInSeconds);
-    // Jos aika on jo mennyt tänään (esim. kello on 23:00 ja ratikka lähti 13:00), lisätään yksi päivä
-    if (departureDate < now) {
-        departureDate.setDate(departureDate.getDate() + 1);
+function normalizeJourneys(rawList){
+  const out = [];
+  const seen = new Set();
+  (rawList || []).forEach(j => {
+    const line = j.line?.name || j.line?.shortName || j.lineName || '';
+    const headsign = j.headSign || j.destination || '';
+    // turvallinen haku mahdollisista kentistä
+    let departureISO = null;
+    if (j.onwardCalls && j.onwardCalls.length && j.onwardCalls[0].expectedDepartureTime) {
+      departureISO = j.onwardCalls[0].expectedDepartureTime;
+    } else if (j.expectedDepartureTime) {
+      departureISO = j.expectedDepartureTime;
+    } else if (j.departureTime) {
+      // jos on vain "HH:MM:SS" ilman päivämäärää => liitetään tämän päivän päivämäärä (paikallinen)
+      const todayLocal = new Date();
+      const d = todayLocal.toISOString().slice(0,10);
+      departureISO = d + 'T' + j.departureTime;
     }
-    var diffMs = departureDate - now;
-    return Math.round(diffMs / 60000);
+    const key = `${line}|${headsign}|${departureISO}`;
+    if(!seen.has(key)){
+      out.push({line: String(line).trim(), headsign: headsign || '', departureISO});
+      seen.add(key);
+    }
+  });
+  return out;
 }
 
-function renderFor(containerId, stopData){
-    var el = document.getElementById(containerId);
-    var departures = stopData ? stopData.stoptimesWithoutPatterns : [];
-
-    if(!departures || departures.length === 0){
-        el.innerHTML = '<div class="direction">Ei lähteviä vuoroja tiedossa.</div>';
-        return;
-    }
-
-    var filtered = departures.filter(function(dep) {
-        // GraphQL antaa linjanumeron (esim. "1") suoraan
-        return LINES_WANTED.indexOf(dep.trip.route.shortName) !== -1 && minutesUntil(dep.realtimeDeparture) >= 0;
-    });
-
-    if(filtered.length === 0){
-        el.innerHTML = '<div class="direction">Ei linjoja 1 tai 3 juuri nyt.</div>';
-        return;
-    }
-
-    // Renderöinti pysyy samana, mutta data tulee hieman eri muodossa
-    var html = '';
-    filtered.slice(0, 5).forEach(function(item) {
-        var mins = minutesUntil(item.realtimeDeparture);
-        var arrivalStr = new Date(new Date().setHours(0,0,item.realtimeDeparture)).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-        var timeLabel;
-        
-        if(mins <= 0){
-            timeLabel = '<span class="now">nyt</span> (' + arrivalStr + ')';
-        } else {
-            timeLabel = mins + ' min' + ' (' + arrivalStr + ')';
-        }
-        
-        html += '<div class="dep"><div class="route">Linja ' + item.trip.route.shortName + ' → ' + (item.headsign || '—') + '</div><div class="time">' + timeLabel + '</div></div>';
-    });
-    el.innerHTML = html;
+function minutesUntil(iso){
+  if(!iso) return null;
+  const t = Date.parse(iso);
+  if(isNaN(t)) return null;
+  return Math.round((t - Date.now()) / 60000);
 }
 
-
-function updateAll(){
-    // GraphQL-kysely molemmille pysäkeille samanaikaisesti
-    var query = JSON.stringify({
-        query: `{
-            stopA: stop(id: "${STOP_A_CODE}") {
-                stoptimesWithoutPatterns(numberOfDepartures: 10) {
-                    realtimeDeparture
-                    headsign
-                    trip { route { shortName } }
-                }
-            },
-            stopB: stop(id: "${STOP_B_CODE}") {
-                stoptimesWithoutPatterns(numberOfDepartures: 10) {
-                    realtimeDeparture
-                    headsign
-                    trip { route { shortName } }
-                }
-            }
-        }`
+function renderFor(containerId, journeys){
+  const el = document.getElementById(containerId);
+  if(!journeys || journeys.length === 0){
+    el.innerHTML = '<div class="direction">Ei lähteviä vuoroja tiedossa.</div>';
+    return;
+  }
+  const filtered = journeys
+    .filter(j => {
+      // robustimpi matching: hyväksytään esim '1A' kun haetaan '1'
+      const normalized = String(j.line || '').replace(/\s/g,'').toLowerCase();
+      return LINES_WANTED.some(w => normalized.startsWith(String(w).toLowerCase()));
+    })
+    .filter(j => {
+      const mins = minutesUntil(j.departureISO);
+      return mins !== null && mins >= 0;
     });
+  if(filtered.length === 0){
+    el.innerHTML = '<div class="direction">Ei linjoja 1 tai 3 juuri nyt.</div>';
+    return;
+  }
+  const groups = {};
+  filtered.forEach(j => {
+    const key = `${j.line} — ${j.headsign || '—'}`;
+    groups[key] = groups[key] || [];
+    groups[key].push(j);
+  });
+  let html = '';
+  Object.keys(groups).sort().forEach(k => {
+    const arr = groups[k].sort((a,b) => {
+      const ma = minutesUntil(a.departureISO) ?? 9999;
+      const mb = minutesUntil(b.departureISO) ?? 9999;
+      return ma - mb;
+    }).slice(0,5);
+    const [line, headsign] = k.split(' — ');
+    html += `<div class="line-block"><div class="line-title">Linja ${line}</div><div class="direction">${headsign}</div><div class="departures">`;
+    let nowShown = false;
+    arr.forEach(item => {
+      const mins = minutesUntil(item.departureISO);
+      const arrivalTime = item.departureISO ? new Date(item.departureISO) : null;
+      const arrivalStr = arrivalTime ? arrivalTime.getHours().toString().padStart(2,'0') + ':' + arrivalTime.getMinutes().toString().padStart(2,'0') : '—';
+      let timeLabel;
+      if(mins === null){
+        timeLabel = arrivalStr;
+      } else if(mins <= 0 && !nowShown){
+        timeLabel = `<span class="now">nyt</span> (${arrivalStr})`;
+        nowShown = true;
+      } else {
+        timeLabel = mins + ' min' + ` (${arrivalStr})`;
+      }
+      html += `<div class="dep"><div class="route">${line} → ${item.headsign || '—'}</div><div class="time">${timeLabel}</div></div>`;
+    });
+    html += `</div></div>`;
+  });
+  el.innerHTML = html;
+}
 
-    makeHttpRequest(GRAPHQL_URL, function(err, data) {
-        if (err) {
-            document.getElementById('content-A').innerHTML = '<div class="direction">Virhe: ' + err.message + '</div>';
-            document.getElementById('content-B').innerHTML = '<div class="direction">Virhe: ' + err.message + '</div>';
-        } else if (data.data) {
-            renderFor('content-A', data.data.stopA);
-            renderFor('content-B', data.data.stopB);
-        } else {
-             document.getElementById('content-A').innerHTML = '<div class="direction">API-virhe.</div>';
-        }
-    }, query); // Lähetetään query datana
+async function updateAll(){
+  try{
+    const normA = normalizeJourneys(await fetchJourneysFor(STOP_A));
+    renderFor('content-A', normA);
+  }catch(err){ console.error("Error updating A:", err); document.getElementById('content-A').innerHTML = '<div class="direction">Virhe ladattaessa pysäkki A.</div>'; }
+  try{
+    const normB = normalizeJourneys(await fetchJourneysFor(STOP_B));
+    renderFor('content-B', normB);
+  }catch(err){ console.error("Error updating B:", err); document.getElementById('content-B').innerHTML = '<div class="direction">Virhe ladattaessa pysäkki B.</div>'; }
 }
 updateAll();
 setInterval(updateAll, 10000);
 
+// --- Palautteet (Näytä vain uusimmat, mahtuvat kerralla) ---
+async function fetchAndDisplayFeedbacks() {
+  try {
+    const res = await fetch(FEEDBACK_FILE);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const allFeedbacks = await res.json();
+    const feedbackDisplayEl = document.getElementById('feedback-display');
 
-// --- Palautteet (Toimii suoraan GitHubissa) ---
-function fetchAndDisplayFeedbacks() {
-  makeHttpRequest(FEEDBACK_FILE, function(err, allFeedbacks) {
-    var feedbackDisplayEl = document.getElementById('feedback-display');
-    if (err) { console.error("Error fetching feedbacks:", err); feedbackDisplayEl.textContent = 'Virhe ladattaessa palautteita.'; return; }
-    if (allFeedbacks && allFeedbacks.length > 0) {
-      var newestFirst = allFeedbacks.reverse(); var html = '';
-      newestFirst.forEach(function(feedback) { html += '<div class="feedback-item"><div class="feedback-content">"' + feedback.Palaute + '"</div><div class="feedback-author">— ' + (feedback.nimimerkki || 'Anonyymi') + '</div></div>'; });
+    if (allFeedbacks.length > 0) {
+      // tehdään kopio ja käännetään, jotta emme mutatoi alkuperäistä
+      const newestFirst = allFeedbacks.slice().reverse();
+      let html = '';
+
+      newestFirst.forEach(feedback => {
+        html += `
+          <div class="feedback-item">
+            <div class="feedback-content">"${feedback.Palaute}"</div>
+            <div class="feedback-author">— ${feedback.nimimerkki || 'Anonyymi'}</div>
+          </div>
+        `;
+      });
       feedbackDisplayEl.innerHTML = html;
-    } else { feedbackDisplayEl.textContent = 'Ei näytettäviä palautteita.'; }
-  }, false); 
+    } else {
+      feedbackDisplayEl.textContent = 'Ei näytettäviä palautteita.';
+    }
+  } catch (err) {
+    console.error("Error fetching feedbacks:", err);
+    document.getElementById('feedback-display').textContent = 'Virhe ladattaessa palautteita.';
+  }
 }
 fetchAndDisplayFeedbacks();
-setInterval(fetchAndDisplayFeedbacks, 30000);
 
+// --- Sään haku (Open-Meteo) ---
+async function loadWeather(){
+  try{
+    // käytetään geolokaatiota jos saatavilla, muuten fallback
+    const getCoords = () => new Promise(resolve => {
+      if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(pos => {
+          resolve({lat: pos.coords.latitude, lon: pos.coords.longitude});
+        }, _err => {
+          resolve({lat:60.1699, lon:24.9384}); // fallback: Helsinki
+        }, {timeout:5000});
+      } else {
+        resolve({lat:60.1699, lon:24.9384});
+      }
+    });
+    const coords = await getCoords();
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(coords.lat)}&longitude=${encodeURIComponent(coords.lon)}&current_weather=true&timezone=auto`;
+    console.log('Fetching weather', url);
+    const r = await fetch(url);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if(!d.current_weather) throw new Error('No current_weather in response');
+    const t = Math.round(d.current_weather.temperature);
+    const code = d.current_weather.weathercode;
 
-// --- Sään haku (Toimii suoraan GitHubissa) ---
-function loadWeather(){
-  makeHttpRequest(WEATHER_URL, function(err, d) {
-    var weatherWidgetEl = document.getElementById("weather-content");
-    if (err) { console.error("Error fetching weather:", err); weatherWidgetEl.textContent = "Virhe ladattaessa säätä."; return; }
-    
-    var t = Math.round(d.current.temperature_2m);
-    var code = d.current.weather_code;
-    var descMap = { 0:"Selkeää", 1:"Melkein selkeää", 2:"Puolipilvistä", 3:"Pilvistä", 45:"Sumua", 48:"Jäätävää sumua", 51:"Tihkua", 61:"Vesisadetta", 71:"Lumikuuroja" };
-    var desc = descMap[code] || "Säätietoja ei saatavilla";
+    const desc = (()=>{
+      switch(code){
+        case 0: return "Selkeää";
+        case 1: return "Melkein selkeää";
+        case 2: return "Puolipilvistä";
+        case 3: return "Pilvistä";
+        case 45: return "Sumua";
+        case 48: return "Jäätävää sumua";
+        case 51: return "Tihkua";
+        case 61: return "Vesisadetta";
+        case 71: return "Lumikuuroja";
+        default: return "Säätietoja ei saatavilla";
+      }
+    })();
 
-    weatherWidgetEl.innerHTML = '<div class="weather-temp">' + t + '°C</div><div class="weather-desc">' + desc + '</div>';
-  }, false); 
+    document.getElementById("weather-content").innerHTML = `
+      <div class="weather-temp">${t}°C</div>
+      <div class="weather-desc">${desc}</div>
+    `;
+  }catch(e){
+    console.error('Weather error', e);
+    document.getElementById("weather-content").textContent = "Virhe ladattaessa säätä.";
+  }
 }
 loadWeather();
 setInterval(loadWeather, 900000);
+
 </script>
 </body>
 </html>

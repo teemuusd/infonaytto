@@ -214,14 +214,15 @@
                       </div>
                   </div>
 
-                  {/* Palautekortti */}
-                  <div className="bg-gradient-to-br from-blue-900/40 to-slate-900 rounded-2xl p-6 border border-blue-500/20 shadow-xl flex flex-col justify-center relative overflow-hidden group h-[55%]">
+                 {/* Palautekortti (Täyttää "tyhjän tilan") */}
+                  <div className="bg-gradient-to-br from-blue-900/40 to-slate-900 rounded-2xl p-8 border border-blue-500/20 shadow-xl flex flex-col justify-center min-h-[250px] relative overflow-hidden group transition-all duration-500 hover:border-blue-500/40">
+                    {/* Koristeellinen taustaikoni */}
                     <ICONS.ThumbsUp className="absolute -right-4 -bottom-4 w-32 h-32 text-blue-500/5 rotate-12" />
                     
-                    <div key={currentFeedbackIndex} className="relative z-10 animate-fade-in flex flex-col h-full justify-between">
-                      <div className="flex items-center gap-2 text-blue-400 mb-2">
+                    <div key={currentFeedbackIndex} className="relative z-10 animate-fade-in">
+                      <div className="flex items-center gap-2 text-blue-400 mb-4">
                         <ICONS.ThumbsUp className="w-6 h-6" />
-                        <h2 className="text-xs font-bold uppercase tracking-widest">Positiiviset palautteet</h2>
+                        <h2 className="text-sm font-bold uppercase tracking-widest">Positiiviset palautteet</h2>
                       </div>
                       
                       <blockquote className="text-xl md:text-2xl font-light italic leading-relaxed text-slate-100 my-auto">

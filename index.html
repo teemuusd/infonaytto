@@ -209,6 +209,9 @@
                           </div>
                         </div>
                       ) : ( <p>Säätietoja ei saatavilla.</p> )}
+                      <div className="mt-4 text-xs text-slate-500 text-center relative z-10">
+                        Säätiedot päivittyvät automaattisesti 10 minuutin välein
+                      </div>
                   </div>
 
                   {/* Palautekortti */}
@@ -218,7 +221,7 @@
                     <div key={currentFeedbackIndex} className="relative z-10 animate-fade-in flex flex-col h-full justify-between">
                       <div className="flex items-center gap-2 text-blue-400 mb-2">
                         <ICONS.ThumbsUp className="w-5 h-5" />
-                        <h2 className="text-xs font-bold uppercase tracking-widest">Asiakaspalaute</h2>
+                        <h2 className="text-xs font-bold uppercase tracking-widest">Positiiviset palautteet</h2>
                       </div>
                       
                       <blockquote className="text-xl md:text-2xl font-light italic leading-relaxed text-slate-100 my-auto">

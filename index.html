@@ -145,9 +145,23 @@
           }, []);
 
           // Apufunktiot
-          const formatDate = (date) => date.toLocaleDateString('fi-FI', { weekday: 'long', day: 'numeric', month: 'long' });
-          const formatTime = (date) => date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-          const getFilterStyle = () => filterMode === 'grayscale' ? 'grayscale(100%) contrast(110%) brightness(90%)' : 'none';
+            const formatDate = (date) => {
+              // 1. Muotoile päivämäärä 'fi-FI' lokaalin mukaisesti (esim. "maanantai 15. joulukuuta")
+              const dateString = date.toLocaleDateString('fi-FI', { 
+                weekday: 'long', 
+                day: 'numeric', 
+                month: 'long' 
+              });
+            
+              // 2. Muuta ensimmäinen kirjain isoksi (esim. "Maanantai 15. joulukuuta")
+              if (dateString.length === 0) {
+                return dateString;
+              }
+              return dateString.charAt(0).toUpperCase() + dateString.slice(1);
+            };
+            
+            const formatTime = (date) => date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
+            const getFilterStyle = () => filterMode === 'grayscale' ? 'grayscale(100%) contrast(110%) brightness(90%)' : 'none';
 
           const currentFeedback = feedbackData.length > 0 ? feedbackData[currentFeedbackIndex] : {Palaute: "", nimimerkki: ""};
 
@@ -161,7 +175,7 @@
                   <span className="text-3xl font-light">{formatDate(time)}</span>
                 </div>
                 <div className="flex items-center gap-4">
-                  <ICONS.Clock className="w-10 h-10 text-blue-400" />
+                  <ICONS.Clock className="w-12 h-12 text-blue-400" />
                   <span className="text-6xl font-bold tracking-wider">{formatTime(time)}</span>
                 </div>
               </header>
